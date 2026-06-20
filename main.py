@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Final, Literal, Optional
 
 import logging
+import os
 
 from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -43,6 +44,10 @@ ALLOWED_ORIGINS: Final[tuple[str, ...]] = (
 
 MATRIX_LIMIT: Final[str] = "30/minute"
 BATCH_LIMIT:  Final[str] = "10/minute"
+
+# Set this in your Render environment variables.
+# Value is provided by RapidAPI after you list your API.
+RAPIDAPI_PROXY_SECRET: Final[str] = os.environ.get("RAPIDAPI_PROXY_SECRET", "")
 
 # ============================================================
 # Logging
@@ -97,6 +102,32 @@ app.add_middleware(
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Numera Engine"])
+
+
+# ============================================================
+# RapidAPI Proxy Guard
+# ============================================================
+
+@app.middleware("http")
+async def verify_rapidapi_proxy(request: Request, call_next):
+    """
+    Rejects any request that did not come through RapidAPI.
+    Exempts /, /health, and /ping so monitoring and uptime checks still work.
+    The secret is set in Render environment variables and provided by RapidAPI
+    after you list your API on their platform.
+    """
+    if request.url.path in ("/", "/health", "/ping"):
+        return await call_next(request)
+    proxy_secret = request.headers.get("X-RapidAPI-Proxy-Secret")
+    if RAPIDAPI_PROXY_SECRET and proxy_secret != RAPIDAPI_PROXY_SECRET:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "error_code": "UNAUTHORIZED",
+                "message": "Access via RapidAPI only.",
+            },
+        )
+    return await call_next(request)
 
 # ============================================================
 # Error Codes
